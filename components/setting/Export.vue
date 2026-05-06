@@ -96,27 +96,35 @@
 </template>
 
 <script setup lang="ts">
+import dayjs from 'dayjs';
 import type { Preferences } from '~/types/preferences';
 
 const preferences: Ref<Preferences> = usePreferences() as unknown as Ref<Preferences>;
 
-const sampleData: Record<string, string> = {
+const sampleStrings: Record<string, string> = {
   account: '人民日报',
   title: '这是一篇示例文章标题',
   aid: '100000001',
   author: '张三',
-  YYYY: '2025',
-  MM: '03',
-  DD: '15',
-  HH: '10',
-  mm: '30',
 };
+const sampleDate = dayjs('2025-03-15 10:30:00');
 
 const dirnamePreview = computed(() => {
   let result = preferences.value.exportConfig.dirname || '';
-  for (const [key, value] of Object.entries(sampleData)) {
+
+  // 字符串变量替换
+  for (const [key, value] of Object.entries(sampleStrings)) {
     result = result.replace(new RegExp(`\\$\\{${key}}`, 'g'), value);
   }
+
+  // dayjs 格式 token：单 token (${YYYY}) 与组合 token (${YYYY-MM-DD-HH-mm}) 都支持
+  result = result.replace(/\$\{([^}]+)\}/g, (match, fmt) => {
+    if (/^[YMDHmsdAaZ\-_:. /]+$/.test(fmt) && /[YMDHms]/.test(fmt)) {
+      return sampleDate.format(fmt);
+    }
+    return match;
+  });
+
   const maxlength = preferences.value.exportConfig.maxlength;
   if (maxlength) {
     result = result.slice(0, maxlength);

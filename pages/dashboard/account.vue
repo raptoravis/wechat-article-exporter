@@ -168,6 +168,22 @@ async function loadAccountArticle(account: MpAccount, loadMore = true) {
   });
 }
 
+// 一键 TXT 导出（下载 + 导出）
+const {
+  loading: batchExportLoading,
+  phase: batchExportPhase,
+  completed_count: batchExportCompleted,
+  total_count: batchExportTotal,
+  batchExport: batchExportTxt,
+} = useBatchTxtExport();
+
+async function batchExportSelectedTxt() {
+  if (!checkLogin()) return;
+
+  const rows = getSelectedRows();
+  await batchExportTxt(rows);
+}
+
 // 同步所有公众号
 async function loadSelectedAccountArticle() {
   if (!checkLogin()) return;
@@ -529,6 +545,19 @@ const { getActualDateRange } = useSyncDeadline();
           @click="loadSelectedAccountArticle"
           >同步</UButton
         >
+        <UButton
+          color="green"
+          icon="i-lucide:file-down"
+          class="disabled:opacity-35 font-mono"
+          :loading="batchExportLoading"
+          :disabled="isDeleting || isSyncing || !hasSelectedRows"
+          :label="
+            batchExportLoading
+              ? `${batchExportPhase} ${batchExportCompleted}/${batchExportTotal}`
+              : '一键TXT导出'
+          "
+          @click="batchExportSelectedTxt"
+        />
         <div class="hidden xl:flex flex-1 justify-end">
           <span class="self-end text-sm text-blue-500 font-medium">同步范围: {{ getActualDateRange() }}</span>
         </div>

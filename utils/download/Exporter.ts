@@ -922,13 +922,72 @@ ${commentHTML}
   }
 
   // 获取文件存储目录
-  private async acquireExportDirectoryHandle(): Promise<void> {
+  public async acquireExportDirectoryHandle(): Promise<void> {
     if (!this.exportRootDirectoryHandle) {
       // @ts-ignore
       this.exportRootDirectoryHandle = await window.showDirectoryPicker({
         mode: 'readwrite',
         startIn: 'downloads',
       });
+    }
+  }
+
+  /**
+   * 一键 TXT 导出：按账号分子目录导出
+   * 文件名沿用 exportConfig.dirname 模板（${YYYY}/${title}/... 等变量）
+   * 若模板未包含 ${account}，自动在前面追加 <昵称>/ 一层子目录以保证按账号分组
+   * 调用前需保证：
+   *   - 已通过 acquireExportDirectoryHandle 选定根目录
+   *   - 计划中所有 url 的 HTML 缓存已就绪（缺失的会被跳过）
+   */
+  public async startBatchTxtExport(
+    plan: Array<{ fakeid: string; nickname: string; urls: string[] }>
+  ): Promise<void> {
+    if (this.isRunning) {
+      throw new Error('导出任务正在运行中，无需重复启动');
+    }
+
+    await this.acquireExportDirectoryHandle();
+
+    this.exportType = 'txt';
+    this.isRunning = true;
+    const start = Date.now();
+    this.emit('export:begin');
+    this.allAccountInfo = await getAllInfo();
+
+    const urlNicknameMap = new Map<string, string>();
+    for (const entry of plan) {
+      for (const url of entry.urls) {
+        urlNicknameMap.set(url, entry.nickname);
+      }
+    }
+    const allUrls = plan.flatMap(p => p.urls);
+
+    const templateHasAccount = /\$\{account}/.test(
+      (preferences.value as Preferences).exportConfig.dirname || ''
+    );
+
+    try {
+      this.emit('export:total', allUrls.length);
+
+      await this.processFileExportQueue(allUrls, async url => {
+        const filename = await this.exportDirName(url);
+        const path = templateHasAccount
+          ? `${filename}.txt`
+          : `${filterInvalidFilenameChars(urlNicknameMap.get(url) || 'unknown')}/${filename}.txt`;
+
+        const content = await this.getRenderedText(url);
+        if (!content) return;
+
+        const blob = new Blob([content], { type: 'text/plain' });
+        await this.writeFile(path, blob);
+      });
+      await sleep(100);
+    } finally {
+      this.isRunning = false;
+      const elapse = Math.round((Date.now() - start) / 1000);
+      this.emit('export:finish', elapse);
+      this.cancelAllPending();
     }
   }
 
@@ -968,11 +1027,15 @@ ${commentHTML}
     dirnameTpl = dirnameTpl.replace(/\$\{title}/g, filterInvalidFilenameChars(article.title));
     dirnameTpl = dirnameTpl.replace(/\$\{aid}/g, article.aid);
     dirnameTpl = dirnameTpl.replace(/\$\{author}/g, article.author_name);
-    dirnameTpl = dirnameTpl.replace(/\$\{YYYY}/g, articleUpdateTime.format('YYYY'));
-    dirnameTpl = dirnameTpl.replace(/\$\{MM}/g, articleUpdateTime.format('MM'));
-    dirnameTpl = dirnameTpl.replace(/\$\{DD}/g, articleUpdateTime.format('DD'));
-    dirnameTpl = dirnameTpl.replace(/\$\{HH}/g, articleUpdateTime.format('HH'));
-    dirnameTpl = dirnameTpl.replace(/\$\{mm}/g, articleUpdateTime.format('mm'));
+
+    // 任何只由 dayjs 日期格式字符 + 常见分隔符构成的 ${...} 都按 dayjs format 整体替换，
+    // 这样既支持 ${YYYY} ${MM} 等单 token，也支持 ${YYYY-MM-DD-HH-mm} 这种组合写法
+    dirnameTpl = dirnameTpl.replace(/\$\{([^}]+)\}/g, (match, fmt) => {
+      if (/^[YMDHmsdAaZ\-_:. /]+$/.test(fmt) && /[YMDHms]/.test(fmt)) {
+        return articleUpdateTime.format(fmt);
+      }
+      return match;
+    });
 
     if (maxlength) {
       return dirnameTpl.slice(0, maxlength);
